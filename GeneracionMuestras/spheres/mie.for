@@ -1,0 +1,311 @@
+
+      PROGRAM MIE
+
+C *************************************************************************
+C This program calculates the size-averaged  scattering matrix and the    *
+C single scattering albedo for a polydisperse or monodispere sample of    *
+C homogeneous and nonactive spheres.                                      * 
+C                                                                         *
+C Inputs:                                                                 *
+C     'mie.in':file containing:                                           *
+C           REFRE=Real part of the refractive index.                      *
+C           REFIM=Imaginary part of the refractive index                  *
+C           WAVEL=Wavelength.                                             *
+C     'size.in':size of the only kind of spheres (1)                      *
+C                       or the size distribution (2).                     *
+C               Example:                                                  *
+C                Log(R)  N[Log(R)]                                        *
+C                -1.12   3.99E+00                                         *
+C                 ...      ...                                            *
+C               depending on wether option (1) or (2) is chose.           *
+C                                                                         *
+C Subroutines: callbh.for, bhmie.for                                      *
+C                                                                         *
+C Outputs:                                                                *
+C     'mie.out':file containing the single scattering albedo and the      *
+C               all elements of the scattering matrix as functions of     *
+C               the scattering angle (with a bin of 1 degree).            *
+C                                                                         *
+C NOTE:WAVEL and radii must be written in the same units "u". Then, the   *
+C cross will be given in "u**2".                                          *
+C ************************************************************************* 
+
+      IMPLICIT NONE
+
+      INCLUDE 'parameters.for'
+
+      INTEGER NANG,NAN,I,J,NRAD,option
+      REAL PI,REFRE,REFIM,RAD,WAVEL,QSCA,QEXT,albedo,      
+     &     LR(NRADMAX),NLR(NRADMAX),R(NRADMAX),n(NRADMAX),
+     &     ANG(NANGMAX),S11(NANGMAX),S12(NANGMAX),
+     &     S33(NANGMAX),S34(NANGMAX),QSCAR(NRADMAX),
+     &     QEXTR(NRADMAX),
+     &     F11MIE(NANGMAX,NRADMAX),F12MIE(NANGMAX,NRADMAX),
+     &     F33MIE(NANGMAX,NRADMAX),F34MIE(NANGMAX,NRADMAX),
+     &     PF11MIE(NANGMAX),PF12MIE(NANGMAX),PF13MIE(NANGMAX),
+     &     PF14MIE(NANGMAX),PF21MIE(NANGMAX),PF22MIE(NANGMAX),
+     &     PF23MIE(NANGMAX),PF24MIE(NANGMAX),PF31MIE(NANGMAX),
+     &     PF32MIE(NANGMAX),PF33MIE(NANGMAX),PF34MIE(NANGMAX),
+     &     PF41MIE(NANGMAX),PF42MIE(NANGMAX),PF43MIE(NANGMAX),
+     &     PF44MIE(NANGMAX),
+     &     NORMA,sEXT,sSCA
+      CHARACTER*1 normalization
+      CHARACTER*8 FNAME
+C ****************************************************************************
+C REFRE=REAL PART OF THE REFRACTIVE INDEX
+C REFIM=IMAGINARY PART OF THE REFRACTIVE INDEX
+C RAD=RADIUS OF A SPHERE
+C WAVEL=WAVELENTH
+C NANG=NUMBER OF SCATTERING ANGLES IN [0,90] DEGREES (0 AND 90 INCLUDED)
+C NAN=NUMBER OF SCATTERING ANGLES IN [0,180] DEGREES (0 AND 180 INCLUDED)
+C ANG=VECTOR OF SCATTERING ANGLES
+C NRAD=NUMBER OF RADII MAPPED IN THE SIZE DISTRIBUTION
+C LR=VECTOR OF VALUES OF logr
+C LNR=VECTOR OF VALUES OF N(logr)
+C R=VECTOR OF RADII
+C n=VECTOR WITH THE NUMERICAL DENSITY OF PARTICLES PER RADIUS
+C FijMIE=ij ELEMENT OF THE SCATTERING MATRIX FOR A FIX ANGLE AND RADIUS
+C PFijMIE=SIZE AVERAGED ij ELEMENT OF THE SCATTERING MATRIX FOR A FIX ANGLE
+C ***************************************************************************
+
+      PI=4.E0*ATAN(1.E0)
+	  READ(*,*)FNAME
+      READ(*,*)WAVEL
+      READ(*,*)REFRE
+      READ(*,*)REFIM
+      READ(*,*)NANG
+      CLOSE(3)
+   
+      NAN=2*NANG-1
+
+      IF(NAN.GT.NANGMAX)THEN
+         WRITE(*,*)'Too many angles. Increase NANGMAX'
+         STOP
+      END IF
+
+C      WRITE(*,100)'NORMALIZED SCATTERING MATRIX? (y/n):'
+C      READ(*,200)normalization
+C      DO 6 WHILE(normalization.NE.'y'.AND.normalization.NE.'n')
+C         WRITE(*,*)'Please, write only "y" or "n".'
+C         WRITE(*,100)'NORMALIZED SCATTERING MATRIX? (y/n):'
+C         READ(*,200)normalization
+C 6    CONTINUE
+      normalization='y'
+C      WRITE(*,*)'Choose option:'
+C      WRITE(*,*)'(1)One single size.'
+C      WRITE(*,*)'(2)A size distribution.'
+C      READ(*,*)option
+      option=2
+      IF(option.EQ.2)THEN
+
+C**************************************************************
+C        SIZE DISTRIBUTION
+C**************************************************************
+
+C        Abrimos y leemos el fichero con las medidas:
+
+         OPEN(UNIT=1,FILE='size.in',STATUS='OLD',ERR=10)
+         READ(1,*)
+         NRAD=0
+         DO I=1,NRADMAX
+            READ(1,*,END=7) LR(I),NLR(I)
+            NRAD=NRAD+1
+            IF(NRAD.GT.NRADMAX)THEN
+               WRITE(*,*)'Too many radii. Increase NRADMAX'
+               STOP
+            END IF
+         END DO
+ 7       CONTINUE
+         CLOSE(1)
+         
+C        Transformamos los datos:
+
+         DO I=1,NRAD
+            R(I)=10.E0**LR(I)
+            n(I)=NLR(I)/(LOG(10.E0)*R(I))
+         END DO
+      
+C**************************************************************
+C        AVERAGED SCATTERING MATRIX
+C**************************************************************
+
+C        Calculamos los elemento de la matriz de scattering
+C        para todos los radios y angulos:
+     
+         DO J=1,NRAD
+            RAD=R(J)
+            
+            CALL CALLBH(REFRE,REFIM,RAD,WAVEL,NANG,ANG,
+     &           S11,S12,S33,S34,QSCA,QEXT)
+         
+C           De la información que nos da CALLBH sacamos las eficiencias:
+         
+            QSCAR(J)=QSCA
+            QEXTR(J)=QEXT
+
+C           Sacamos también los elementos de la matriz de scattering a todos
+C           los ángulos:
+
+            DO I=1,NAN
+               F11MIE(I,J)=S11(I)
+               F12MIE(I,J)=S12(I)
+               F33MIE(I,J)=S33(I)
+               F34MIE(I,J)=S34(I)                        
+            END DO
+         END DO
+         
+C        Size-averaged cross sections:
+
+         sEXT=0.E0
+         sSCA=0.E0
+         DO J=1,NRAD-1
+            sEXT=sEXT+5.E-1*(R(J+1)-R(J))*(R(J+1)*R(J+1)*QEXTR(J+1)*
+     &           n(J+1)+R(J)*R(J)*QEXTR(J)*n(J))
+            sSCA=sSCA+5.E-1*(R(J+1)-R(J))*(R(J+1)*R(J+1)*QSCAR(J+1)*
+     &           n(J+1)+R(J)*R(J)*QSCAR(J)*n(J))
+         END DO
+         sEXT=PI*sEXT
+         sSCA=PI*sSCA
+
+C        Single scattering albedo:
+
+         albedo=sSCA/sEXT
+
+C        Calculamos los promedios de los elementos sobre la distribución
+C        de tamaños integrando con el método del trapecio, y generamos los 
+C        que son dependientes de los calculados:
+     
+         DO I=1,NAN
+            PF11MIE(I)=0.E0
+            PF12MIE(I)=0.E0
+            PF33MIE(I)=0.E0
+            PF34MIE(I)=0.E0
+            DO J=1,NRAD-1
+               PF11MIE(I)=PF11MIE(I)+((R(J+1)-R(J))/2.E0)*
+     &              (n(J)*F11MIE(I,J)+n(J+1)*F11MIE(I,J+1))
+               PF12MIE(I)=PF12MIE(I)+((R(J+1)-R(J))/2.E0)*
+     &              (n(J)*F12MIE(I,J)+n(J+1)*F12MIE(I,J+1))
+               PF33MIE(I)=PF33MIE(I)+((R(J+1)-R(J))/2.E0)*
+     &              (n(J)*F33MIE(I,J)+n(J+1)*F33MIE(I,J+1))
+               PF34MIE(I)=PF34MIE(I)+((R(J+1)-R(J))/2.E0)*
+     &              (n(J)*F34MIE(I,J)+n(J+1)*F34MIE(I,J+1))
+            END DO
+            PF13MIE(I)=0.E0
+            PF14MIE(I)=0.E0
+            PF21MIE(I)=PF12MIE(I)
+            PF22MIE(I)=PF11MIE(I)
+            PF23MIE(I)=0.E0
+            PF24MIE(I)=0.E0
+            PF31MIE(I)=0.E0
+            PF32MIE(I)=0.E0
+            PF41MIE(I)=0.E0
+            PF42MIE(I)=0.E0
+            PF43MIE(I)=-PF34MIE(I)
+            PF44MIE(I)=PF33MIE(I)
+         END DO
+
+      ELSE
+
+         OPEN(UNIT=1,FILE='size.in',STATUS='OLD',ERR=10)
+         READ(1,*)RAD
+         CLOSE(1)
+
+         CALL CALLBH(REFRE,REFIM,RAD,WAVEL,NANG,ANG,
+     &        S11,S12,S33,S34,QSCA,QEXT)
+         
+C        Single scattering albedo:
+
+         albedo=QSCA/QEXT
+
+C        Cross section:
+
+         sSCA=QSCA*PI*RAD**2
+         sEXT=QEXT*PI*RAD**2
+
+C        Calculamos los promedios de los elementos sobre la distribución
+C        de tamaños integrando con el método del trapecio, y generamos los 
+C        que son dependientes de los calculados:
+     
+         DO I=1,NAN
+            PF11MIE(I)=S11(I)
+            PF12MIE(I)=S12(I)
+            PF33MIE(I)=S33(I)
+            PF34MIE(I)=S34(I)    
+            
+            PF13MIE(I)=0.E0
+            PF14MIE(I)=0.E0
+            PF21MIE(I)=PF12MIE(I)
+            PF22MIE(I)=PF11MIE(I)
+            PF23MIE(I)=0.E0
+            PF24MIE(I)=0.E0
+            PF31MIE(I)=0.E0
+            PF32MIE(I)=0.E0
+            PF41MIE(I)=0.E0
+            PF42MIE(I)=0.E0
+            PF43MIE(I)=-PF34MIE(I)
+            PF44MIE(I)=PF33MIE(I)
+         END DO
+         
+      END IF
+
+C**************************************************************
+C NORMALIZATION (IF REQUIRED):
+C**************************************************************
+      
+      IF(normalization.EQ.'y')THEN
+         NORMA=0.E0
+         DO I=1,NAN-1
+            NORMA=NORMA+5.E-1*(ANG(I+1)-ANG(I))*(PI/180.E0)*
+     &           (PF11MIE(I+1)*SIN(ANG(I+1)*(PI/180.E0))+PF11MIE(I)*
+     &           SIN(ANG(I)*(PI/180.E0)))
+         END DO
+         NORMA=5.E-1*NORMA
+         
+         DO I=1,NAN
+            PF11MIE(I)=PF11MIE(I)/NORMA
+            PF12MIE(I)=PF12MIE(I)/NORMA
+            PF21MIE(I)=PF21MIE(I)/NORMA
+            PF22MIE(I)=PF22MIE(I)/NORMA
+            PF33MIE(I)=PF33MIE(I)/NORMA
+            PF34MIE(I)=PF34MIE(I)/NORMA
+            PF43MIE(I)=PF43MIE(I)/NORMA
+            PF44MIE(I)=PF44MIE(I)/NORMA
+         END DO
+      END IF
+
+C La escribimos en 1 fichero:
+
+      OPEN(UNIT=2,FILE=FNAME//'.out',STATUS='UNKNOWN')
+      WRITE(2,300)albedo,'single scattering albedo'  
+      WRITE(2,300)sSCA,'scattering cross section'  
+      WRITE(2,300)sEXT,'extinction cross section'  
+      IF(normalization.EQ.'n')THEN
+         WRITE(2,*)'Non-normalized scattering matrix:'
+      ELSE
+         WRITE(2,*)'Normalized scattering matrix:'
+      END IF
+      
+      WRITE(2,400)'theta(degrees)','F11','F12','F13','F14','F21',
+     &     'F22','F23','F24','F31','F32','F33','F34','F41',
+     &     'F42','F43','F44'
+      DO I=1,NAN
+         WRITE(2,500) ANG(I),PF11MIE(I),PF12MIE(I),PF13MIE(I),
+     &        PF14MIE(I),PF21MIE(I),PF22MIE(I),PF23MIE(I),
+     &        PF24MIE(I),PF31MIE(I),PF32MIE(I),PF33MIE(I),
+     &        PF34MIE(I),PF41MIE(I),PF42MIE(I),PF43MIE(I),
+     &        PF44MIE(I)
+      END DO
+      CLOSE(2)         
+    
+      STOP
+
+ 10   WRITE(*,*)'"size.in" is missing.'
+ 30   WRITE(*,*)'"mie.in" is missing.'
+
+ 100  FORMAT(A36)
+ 200  FORMAT(A1)
+ 300  FORMAT(E14.7,3x,A24)
+ 400  FORMAT(1x,A14,5x,16(A3,18x))
+ 500  FORMAT(1x,F7.3,16(3x,E18.10))
+
+      END

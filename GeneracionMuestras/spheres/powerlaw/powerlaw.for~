@@ -1,0 +1,103 @@
+      PROGRAM PLDIS
+
+C*****************************************//****************************
+C THIS PROGRAM CALCULATES A MAPPING OF A POWER LAW SIZE DISTRIBUTION
+C 
+C INPUTS:
+C        index=index of the distribution.
+C        rmin=inferior limit of the distribution.
+C        rmax=superior limit of the distribution.
+C        
+C OUTPUT:
+C        'size.out'=file with a mapping of the size distribution in the
+C                   format "log(r)   N(logr)   S(logr)   V(logr)".
+C
+C***********************************************************************
+
+      IMPLICIT NONE
+
+      INTEGER NRMAX
+
+      PARAMETER (NRMAX=10000)
+
+      INTEGER I,nrad
+      REAL *8 Rmin,Rmax,index,const,R(NRMAX),n(NRMAX),logr(NRMAX),
+     &     Nlogr(NRMAX)
+
+      WRITE(*,*)'Rmin (arbitrary units)?'
+      READ(*,*)Rmin
+      WRITE(*,*)'Rmax (arbitrary units)?'
+      READ(*,*)Rmax
+      WRITE(*,*)'Index (possitive)?'
+      READ(*,*)index
+      WRITE(*,*)'Number of radii?'
+      READ(*,*)nrad
+      IF(nrad.GT.NRMAX)THEN
+         WRITE(*,*)'Increase NRMAX'
+         STOP
+      END IF
+
+      const=(1.D0-index)/(Rmax**(1.D0-index)-Rmin**(1.D0-index))
+      
+      CALL MAPPING(Rmin,Rmax,index,const,nrad,R,n)
+
+      CALL WRITELOG(nrad,R,n,logr,Nlogr)
+
+      OPEN(UNIT=10,FILE='size.out',STATUS='UNKNOWN')
+      WRITE(10,99)'logr','Nlogr'
+      DO I=1,nrad
+         WRITE(10,100) logr(I),Nlogr(I)
+      END DO
+      CLOSE(10)
+
+      STOP
+ 99   FORMAT(4x,A4,16x,A5)
+ 100  FORMAT(3x,E17.10,3x,E17.10)
+
+      END
+
+C***********************************************************************
+C SUBROUTINE TO CALCULATE R AND n(R) FROM THE PARAMETERS OF THE
+C DISTRIBUTION.
+C***********************************************************************
+
+      SUBROUTINE MAPPING(Rmin,Rmax,index,const,nrad,R,n)
+
+      INTEGER I,nrad
+      REAL*8 lograd,Rmin,Rmax,index,const,R(nrad),n(nrad)
+
+C     We map the range of radii in a logarithmic way because the 
+C     small particles are more important than the big ones in the 
+C     averages of the phase function: the forward scattering peak
+C     of F11 is very variable when slightly changing the size of
+C     the particles if these are small.
+      lograd=LOG10(Rmin)
+      DO I=1,nrad
+         R(I)=1.D1**(lograd)
+         n(I)=const*R(I)**(-1.D0*index)
+         lograd=lograd+(LOG10(Rmax)-LOG10(Rmin))/DBLE(nrad-1)
+      END DO
+
+      RETURN
+
+      END
+
+C***********************************************************************
+C SUBROUTINE TO CONVERT THE LINEAR TO LOGARITHMIC DISTRIBUTION
+C***********************************************************************
+
+      SUBROUTINE WRITELOG(nrad,R,n,logr,Nlogr)
+
+      IMPLICIT NONE
+
+      INTEGER I,nrad
+      REAL*8 R(nrad),n(nrad),logr(nrad),Nlogr(nrad)
+
+      DO I=1,nrad
+         logr(I)=DLOG10(R(I))
+         Nlogr(I)=DLOG(1.D1)*R(I)*n(I)
+      END DO
+      
+      RETURN
+
+      END
